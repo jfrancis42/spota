@@ -6,7 +6,6 @@
 # TODO: Add the rest of the gone_freq list.
 # TODO: Clean up the whole mobile bands thing.
 # TODO: Read setup from a file.
-# TODO: Add command line options for debug, etc.
 # TODO: Display the newest spot when there's a hash collision (ie, more than one).
 # TODO: Tune to the newest spot when there's a hash collision (ie, more than one).
 
@@ -56,12 +55,14 @@ s=False
 refresh=60
 max_age=600
 
+# Write stuff to the log file.
 def log(stuff):
   global logfile
   logfile.write(str(datetime.datetime.now())+':'+stuff+'\n')
   logfile.flush()
 
-# Note that this assumes US bandplan.
+# Given a frequency in hz, return the band. Note that this assumes US
+# bandplan. Note that it also doesn't distinguish between 75 and 80.
 def band(freq):
   if(freq>=3500000 and freq<=4000000):
     return('eighty')
@@ -84,6 +85,8 @@ def band(freq):
   else:
     return('unknown')
 
+# Remove any prefixes and/or suffixes from a ham call to clean it up
+# for display.
 def clean_call(call):
   return(sorted(call.split('/'),key=lambda c: len(c),reverse=True)[0])
 
@@ -188,7 +191,7 @@ class Three:
       elif(self.center_own):
         return(self.left_name+' (*) (*) '+self.right_name)
 
-# spot class
+# Generic spot class to be inherited from.
 class SPOT:
   def __init__(self,stuff):
     self.stuff=stuff
@@ -205,6 +208,8 @@ class POTA(SPOT):
   def __init__(self,stuff):
     SPOT.__init__(self,stuff)
     self.kind='POTA'
+    # POTA station is eligible for more contacts if he changes bands,
+    # so don't hash the band.
     self.id=mmh3.hash(clean_call(stuff['activator'])+'/'+
                       stuff['reference'])
     self.spotid=int(stuff['spotId'])
@@ -229,9 +234,6 @@ class POTA(SPOT):
       self.mode='UNK'
     else:
       self.mode=stuff['mode']
-
-  def band(self):
-    return(band(self.freq))
 
   def json(self):
     return(json.dumps(self.stuff,indent=2))
@@ -258,10 +260,10 @@ class SOTA(SPOT):
   def __init__(self,stuff):
     SPOT.__init__(self,stuff)
     self.kind='SOTA'
+    # SOTA station is one and done per peak, so include the band.
     self.id=mmh3.hash(clean_call(stuff['activatorCallsign'])+'/'+
                       stuff['associationCode']+'/'+stuff['summitCode']+'/'+
                       band(float(fixer(stuff['frequency']))*1000000.0))
-    self.spotid=int(stuff['id'])
     self.spotid=int(stuff['id'])
     self.activator=clean_call(stuff['activatorCallsign'])
     self.freq=float(fixer(stuff['frequency']))*1000000.0
@@ -274,9 +276,6 @@ class SOTA(SPOT):
       self.mode='UNK'
     else:
       self.mode=stuff['mode']
-
-  def band(self):
-    return(band(self.freq))
 
   def json(self):
     return(json.dumps(self.stuff,indent=2))
@@ -292,6 +291,8 @@ class SOTA(SPOT):
           self.mode+
           '             ')
 
+# This thread runs forever, periodically fetching SOTA/POTA spots from
+# their respective APIs.
 def spots_thread(name):
   global spots_lock
   global spots
@@ -317,6 +318,7 @@ def spots_thread(name):
       updating=False
     time.sleep(refresh)
 
+# Mark a spot as heard.
 def heard_it(current):
   global spots
   global worked
@@ -329,6 +331,7 @@ def heard_it(current):
     worked=list(filter(lambda i: i!=current,worked))
     log('heard:'+spot.oneline())
 
+# Mark a spot as worked.
 def worked_it(current):
   global spots
   global worked
@@ -341,6 +344,7 @@ def worked_it(current):
     heard=list(filter(lambda i: i!=current,heard))
     log('worked:'+spot.oneline())
 
+# Mark a spot as 'can't hear'.
 def cannot_hear(current):
   global spots
   global worked
@@ -353,6 +357,7 @@ def cannot_hear(current):
     heard=list(filter(lambda i: i!=current,heard))
     log('cannot_hear:'+spot.oneline())
 
+# Tune the radio to this spot's frequency and mode.
 def radio_tune(current):
   global spots
   global rig
@@ -369,9 +374,11 @@ def radio_tune(current):
       else:
         rig.set_mode(Hamlib.RIG_MODE_LSB)
 
+# See if the given ref matches one of the list of prefix choices.
 def find_ref(ref,choices):
   return(sorted(list(map(lambda c: ref.find(c),choices)),reverse=True)[0]==0)
 
+# Main loop of the program.
 def main_menu(stdscr):
   global debug
   global worked
@@ -387,22 +394,37 @@ def main_menu(stdscr):
   y_offset=2
   displayed=False
   blank='               '
+  # In the SOTA world, it's common for the activator to spot himself
+  # with the 'base' frequency of the current band to let the world
+  # know he's done.
   gone_freqs=[3500000.0,7000000.0,10000000.0,14000000.0]
 
+  # These are the SOTA/POTA locators for the USA.
   spots_us=['K0M','KH0','KH2','KH6','KP4','W0C','W0D','W0I','W0M','W0N','W1','W2','W3'
             'W4A','W4C','W4G','W4K','W4T','W4V','W5A','W5M','W5N','W5O','W5T','W6','W7A'
             'W7I','W7M','W7N','W7O','W7U','W7W','W7Y','W8M','W8O','W8V','W9',
             'US-']
+  # These are the SOTA/POTA locators for North America.
   spots_na=['K0M','KH0','KH2','KH6','KP4','W0C','W0D','W0I','W0M','W0N','W1','W2','W3'
             'W4A','W4C','W4G','W4K','W4T','W4V','W5A','W5M','W5N','W5O','W5T','W6','W7A'
             'W7I','W7M','W7N','W7O','W7U','W7W','W7Y','W8M','W8O','W8V','W9'
             'VE1','VE2','VE3','VE4','VE5','VE6','VE7','VE9','VO1','VO2','VY1','VY2'
             'XE1','XE2','XE3',
             'US-','MX-','CA-']
+  # These are the SOTA/POTA locators for Mexico and Canada.
   spots_ca_mx=['VE1','VE2','VE3','VE4','VE5','VE6','VE7','VE9','VO1','VO2','VY1','VY2'
                'XE1','XE2','XE3',
                'MX-','CA-']
 
+  # These are the bands I can work effectively while mobile.
+  mobile_bands=['twenty','seventeen','fifteen','twelve','ten']
+
+  # These are the bands I can work from home/portable.
+  stationary_bands=['eighty','sixty','forty','thirty','twenty',
+                    'seventeen','fifteen','twelve','ten']
+
+  # Add the various "switches" for switching and displaying of options
+  # in the GUI.
   mode=Three('CW',False,'SSB',
              'CW',False,'SSB',
              True,False,False,'c')
@@ -416,19 +438,17 @@ def main_menu(stdscr):
               'freq','time',
               'l')
   bands=Two('Mobile','All',
-#            ['forty','thirty','twenty','seventeen','fifteen','twelve','ten'],
-            ['twenty','seventeen','fifteen','twelve','ten'],
-            ['eighty','sixty','forty','thirty','twenty','seventeen','fifteen','twelve','ten','unknown'],
-           'r')
+            mobile_bands,stationary_bands,
+            'r')
 
-  # Clear and refresh the screen for a blank canvas
+  # Clear and refresh the screen.
   stdscr.clear()
   stdscr.refresh()
   stdscr.nodelay(1)
   curses.cbreak()
   curses.noecho()
 
-  # curses colors
+  # Add the colors we want to use.
   curses.start_color()
   curses.init_pair(1,curses.COLOR_GREEN,curses.COLOR_BLACK)
   curses.init_pair(2,curses.COLOR_RED,curses.COLOR_BLACK)
@@ -436,14 +456,17 @@ def main_menu(stdscr):
   curses.init_pair(4,curses.COLOR_YELLOW,curses.COLOR_BLACK)
   curses.init_pair(5,curses.COLOR_BLUE,curses.COLOR_BLACK)
 
+  # Loop forever.
   while (k != ord('Q') and k != ord('q')):
     # Initialization
     stdscr.clear()
     height,width=stdscr.getmaxyx()
 
+    # Blanks for clearing old stuff.
     big_blank=' '*(width-47-1)
     full_blank=' '*(width-1)
 
+    # Add the column headers.
     stdscr.addstr(y_offset,5,'Type',curses.color_pair(3))
     stdscr.addstr(y_offset,10,' Call',curses.color_pair(3))
     stdscr.addstr(y_offset,20,' Ref',curses.color_pair(3))
@@ -461,6 +484,7 @@ def main_menu(stdscr):
     stdscr.addstr(y_offset,59,' -----',curses.color_pair(3))
     y_offset=y_offset+1
 
+    # Loop until the user quits.
     while (k != ord('Q') and k != ord('q')):
       now=time.time()
       with spots_lock:
@@ -468,12 +492,14 @@ def main_menu(stdscr):
         displayed=array.array('i',[])
         if(ls>0):
           y=0
+          # Sort by the user's preference.
           things=False
           if(sorting.get_value()[0]=='freq'):
             things=sorted(spots,key=lambda s: s.freq)
           else:
             things=sorted(spots,key=lambda s: s.age())
           for spot in things:
+            # Display the spots as specified by user preferences.
             if((find_ref(spot.reference,loc.get_value()[0])) and
                 (spot.mode in mode.get_value()) and
                 (spot.kind in kinds.get_value()[0]) and
@@ -483,9 +509,12 @@ def main_menu(stdscr):
                 (spot.band()!="unknown") and
                 (not (spot.id in displayed))):
               displayed.append(spot.id)
+              # TODO: We should probably add the last spot by
+              # timestamp rather than the first in the list.
               if(not(spot.id in allspots)):
                 allspots.append(spot.id)
                 log('added:'+spot.oneline())
+              # Set the colors for each line.
               if(spot.id in worked):
                 color=1 # green for worked
               elif(spot.id in unheard):
@@ -494,21 +523,36 @@ def main_menu(stdscr):
                 color=4 # yellow for heard
               else:
                 color=3 # white for untouched
+              # Display the pointer for the currently selected spot.
               if(current==spot.id):
-                stdscr.addstr(y+y_offset,0,'-->',curses.color_pair(color))
+                stdscr.addstr(y+y_offset,0,
+                              '-->',curses.color_pair(color))
               else:
-                stdscr.addstr(y+y_offset,0,'   ',curses.color_pair(color))
-              stdscr.addstr(y+y_offset,5,spot.kind+blank,curses.color_pair(color))
-              stdscr.addstr(y+y_offset,10,' '+spot.activator+blank,curses.color_pair(color))
-              stdscr.addstr(y+y_offset,20,' '+spot.reference+blank,curses.color_pair(color))
-              stdscr.addstr(y+y_offset,35,' '+str(spot.freq/1000.0)+blank,curses.color_pair(color))
-              stdscr.addstr(y+y_offset,45,' '+spot.mode+blank,curses.color_pair(color))
-              stdscr.addstr(y+y_offset,52,' '+str(spot.age())+big_blank,curses.color_pair(color))
-              stdscr.addstr(y+y_offset,59,' '+spot.locationdesc+big_blank,curses.color_pair(color))
+                stdscr.addstr(y+y_offset,0,
+                              '   ',curses.color_pair(color))
+              # Display the fields for this spot.
+              stdscr.addstr(y+y_offset,5,
+                            spot.kind+blank,curses.color_pair(color))
+              stdscr.addstr(y+y_offset,10,
+                            ' '+spot.activator+blank,curses.color_pair(color))
+              stdscr.addstr(y+y_offset,20,
+                            ' '+spot.reference+blank,curses.color_pair(color))
+              stdscr.addstr(y+y_offset,35,
+                            ' '+str(spot.freq/1000.0)+blank,curses.color_pair(color))
+              stdscr.addstr(y+y_offset,45,
+                            ' '+spot.mode+blank,curses.color_pair(color))
+              stdscr.addstr(y+y_offset,52,
+                            ' '+str(spot.age())+big_blank,curses.color_pair(color))
+              stdscr.addstr(y+y_offset,59,
+                            ' '+spot.locationdesc+big_blank,curses.color_pair(color))
+              # Increment down the screen until we run out of room.
               if(y<height-y_offset-7):
                 y=y+1
+      # Blank out the unused space.
       for n in range(height-y-y_offset-6):
-        stdscr.addstr(y+n+y_offset,0,full_blank,curses.color_pair(color))
+        stdscr.addstr(y+n+y_offset,0,
+                      full_blank,curses.color_pair(color))
+      # Read the keyboard and process options.
       k=stdscr.getch()
       if(k==-1):
         time.sleep(0.25)
@@ -567,21 +611,23 @@ def main_menu(stdscr):
             else:
               current=False
 
+      # Display the menu at the bottom.
       stdscr.addstr(height-5,0,'O:  '+sorting.show(),curses.color_pair(4))
       stdscr.addstr(height-4,0,'S:  '+kinds.show(),curses.color_pair(4))
       stdscr.addstr(height-3,0,'M:  '+mode.show(),curses.color_pair(4))
       stdscr.addstr(height-2,0,'L:  '+loc.show(),curses.color_pair(4))
       stdscr.addstr(height-1,0,'B:  '+bands.show(),curses.color_pair(4))
-
       stdscr.addstr(height-5,30,'T:  Tune',curses.color_pair(4))
       stdscr.addstr(height-4,30,'C:  Cannot Hear',curses.color_pair(4))
       stdscr.addstr(height-3,30,'W:  Worked',curses.color_pair(4))
       stdscr.addstr(height-2,30,'H:  Heard',curses.color_pair(4))
       stdscr.addstr(height-1,30,'R:  Reset Spot',curses.color_pair(4))
 
+      # Let the user know if we're fetching fresh data from the APIs.
       if updating:
         stdscr.addstr(0,0,'***UPDATING***'+full_blank,curses.color_pair(2))
       else:
+        # Show the debug info, if requested.
         if(debug):
           stdscr.addstr(0,0,
                         'Displayed:'+
@@ -592,9 +638,11 @@ def main_menu(stdscr):
                         str(len(displayed))+full_blank,curses.color_pair(3))
         else:
           stdscr.addstr(0,0,blank,curses.color_pair(2))
+      # Refresh anything added to the screen and start again.
       stdscr.refresh()
 
 if __name__ == '__main__':
+  # Process the command line arguments.
   parser=argparse.ArgumentParser(description="SOTA/POTA Monitor/Tuner")
   parser.add_argument("--no_radio",default=False,action="store_true",help="Pretend to work")
   parser.add_argument("--debug",default=False,action="store_true",help="Debug mode")
@@ -602,37 +650,49 @@ if __name__ == '__main__':
   parser.add_argument("--max_age",default=False,help="Max spot age in seconds (default 600)")
   args=parser.parse_args()
 
+  # Turn on debug if the user wants it.
   if(args.debug):
     debug=True
   else:
     debug=False
     
-  # log file
+  # Open the log file.
+  # TODO: Make this configurable.
   logfile=open('/tmp/spota.log','a+')
 
+  # Don't spew debug info to stdout.
   Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE)
 
+  # Allow the user to run without a selected radio. Note: This is
+  # where you add your own radio and serial info until I get around to
+  # making it configurable.
   if(args.no_radio):
     rig=Hamlib.Rig(Hamlib.RIG_MODEL_DUMMY)
   else:
     rig=Hamlib.Rig(Hamlib.RIG_MODEL_IC7300)
+    rig.set_conf('rig_pathname','/dev/ttyUSB0')
+    rig.set_conf('serial_speed','19200')
+    rig.set_conf('retry','5')
    
-  rig.set_conf('rig_pathname','/dev/ttyUSB0')
-  rig.set_conf('serial_speed','19200')
-  rig.set_conf('retry','5')
+  # Connect to the radio.
   rig.open ()
 
+  # Send radio data to the log.
   log(Hamlib.rigerror(rig.error_status))
 
+  # Start the thread to fetch spot data.
   thread1=Thread(target=spots_thread,args=('Spots Thread',),daemon=True)
   thread1.start()
 
+  # Set the max age of displayed spots, if selected.
   if(args.max_age):
     max_age=int(args.max_age)
 
+  # This is sort of a debug mode.
   if(args.no_curses):
     while True:
       print(len(spots))
       time.sleep(1)
 
+  # Run the main loop.
   curses.wrapper(main_menu)
