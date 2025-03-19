@@ -1,0 +1,20 @@
+TODO: Fix band calculations for non-USA. Maybe do W=c/F and round?
+
+TODO: Deal with center_own state properly in Three/show().
+
+TODO: Add the rest of the gone_freq list.
+
+TODO: Clean up the whole mobile bands thing.
+
+TODO: Read setup from a file.
+
+TODO: Display the newest spot when there's a hash collision (ie, more than one).
+
+TODO: Tune to the newest spot when there's a hash collision (ie, more than one).
+
+TODO: Think about using the lat/lon data in the POTA spots and
+      fetching lat/lon from the SOTA spots and calculating distances
+      and bearings from the operator to the spot location. When
+      combined with ToD and band information, this might lead to
+      suggesting most likely spots to be reachable at the current time
+      (as well as historically).

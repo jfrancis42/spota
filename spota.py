@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-# TODO: Fix band calculations for non-USA. Maybe do W=c/F and round?
-# TODO: Deal with center_own state properly in Three/show().
-# TODO: Add the rest of the gone_freq list.
-# TODO: Clean up the whole mobile bands thing.
-# TODO: Read setup from a file.
-# TODO: Display the newest spot when there's a hash collision (ie, more than one).
-# TODO: Tune to the newest spot when there's a hash collision (ie, more than one).
+# Copyright 2025
+# Jeff Francis, N0GQ
+# gjfrancis@protonmail.com
+# https://github.com/jfrancis42/spota
 
 import sys
 import os
