@@ -46,9 +46,11 @@ global debug
 global rig_freq
 global rig_mode
 global autohide
+global no_curses
 
 debug=False
 autohide=False
+no_curses=False
 spots=array.array('i',[])
 allspots=[]
 worked=[]
@@ -229,6 +231,7 @@ class POTA(SPOT):
     self.activator=clean_call(stuff['activator'])
     self.freq=float(stuff['frequency'])*1000.0
     self.reference=stuff['reference']
+    self.loc=stuff['reference']
     self.parkname=stuff['parkName']
     self.spottime=parse(stuff['spotTime'],fuzzy=True)
     self.spotter=stuff['spotter']
@@ -281,6 +284,7 @@ class SOTA(SPOT):
     self.activator=clean_call(stuff['activatorCallsign'])
     self.freq=float(fixer(stuff['frequency']))*1000000.0
     self.reference=stuff['associationCode']+'/'+stuff['summitCode']
+    self.loc=stuff['associationCode']
     self.spottime=parse(stuff['timeStamp'],fuzzy=True)
     self.name=stuff['activatorName']
     self.locationdesc=stuff['summitDetails']
@@ -318,7 +322,7 @@ def state_thread(name):
       s.write(json.dumps({'worked':worked,
                           'heard':heard,
                           'unheard':unheard,
-                          'hide':hide})+'\n')
+                          'hide':hide},indent=2)+'\n')
       s.close()
     time.sleep(13)
 
@@ -329,6 +333,7 @@ def spots_thread(name):
   global spots
   global updating
   global refresh
+  global no_curses
   
   while True:
     spots=[]
@@ -340,7 +345,7 @@ def spots_thread(name):
         stuff=json.loads(r.text)
         for p in stuff:
           spots.append(POTA(p))
-      r=requests.get('https://api2.sota.org.uk/api/spots/100/all%7Call')
+      r=requests.get('https://api2.sota.org.uk/api/spots/50/all%7Call')
       if(r.status_code==200 or r.status_code==201):
         stuff=json.loads(r.text)
         for s in stuff:
@@ -429,8 +434,8 @@ def radio_tune(current):
           rig.set_mode(Hamlib.RIG_MODE_LSB)
 
 # See if the given ref matches one of the list of prefix choices.
-def find_ref(ref,choices):
-  return(sorted(list(map(lambda c: ref.find(c),choices)),reverse=True)[0]==0)
+def find_loc(loc,choices):
+  return(sorted(list(map(lambda c: loc.find(c),choices)),reverse=True)[0]==0)
 
 # Main loop of the program.
 def main_menu(stdscr):
@@ -440,6 +445,7 @@ def main_menu(stdscr):
   global heard
   global hide
   global now
+  global autohide
 
   y=0
   k=0
@@ -456,28 +462,16 @@ def main_menu(stdscr):
   # know he's done.
   gone_freqs=[3500000.0,7000000.0,10000000.0,14000000.0]
 
-  # These are the SOTA/POTA locators for the USA.
-  spots_us=['K0M','KH0','KH2','KH6','KP4','W0C','W0D','W0I','W0M','W0N','W1','W2','W3'
-            'W4A','W4C','W4G','W4K','W4T','W4V','W5A','W5M','W5N','W5O','W5T','W6','W7A'
-            'W7I','W7M','W7N','W7O','W7U','W7W','W7Y','W8M','W8O','W8V','W9',
-            'US-']
   # These are the SOTA/POTA locators for North America.
-  spots_na=['K0M','KH0','KH2','KH6','KP4','W0C','W0D','W0I','W0M','W0N','W1','W2','W3'
-            'W4A','W4C','W4G','W4K','W4T','W4V','W5A','W5M','W5N','W5O','W5T','W6','W7A'
-            'W7I','W7M','W7N','W7O','W7U','W7W','W7Y','W8M','W8O','W8V','W9'
-            'VE1','VE2','VE3','VE4','VE5','VE6','VE7','VE9','VO1','VO2','VY1','VY2'
-            'XE1','XE2','XE3',
-            'US-','MX-','CA-']
-  # These are the SOTA/POTA locators for Mexico and Canada.
-  spots_ca_mx=['VE1','VE2','VE3','VE4','VE5','VE6','VE7','VE9','VO1','VO2','VY1','VY2'
-               'XE1','XE2','XE3',
-               'MX-','CA-']
-
-  # These are the bands I can work effectively while mobile.
-  mobile_bands=['twenty','seventeen','fifteen','twelve','ten']
+  valid_locs=['K0M','KH0','KH2','KH6','KP4','W0C','W0D','W0I','W0M','W0N','W1','W2','W3',
+              'W4A','W4C','W4G','W4K','W4T','W4V','W5A','W5M','W5N','W5O','W5T','W6','W7A',
+              'W7I','W7M','W7N','W7O','W7U','W7W','W7Y','W8M','W8O','W8V','W9',
+              'VE1','VE2','VE3','VE4','VE5','VE6','VE7','VE9','VO1','VO2','VY1','VY2',
+              'XE1','XE2','XE3',
+              'US-','MX-','CA-']
 
   # These are the bands I can work from home/portable.
-  stationary_bands=['eighty','sixty','forty','thirty','twenty',
+  valid_bands=['eighty','sixty','forty','thirty','twenty',
                     'seventeen','fifteen','twelve','ten']
 
   # Add the various "switches" for switching and displaying of options
@@ -488,15 +482,12 @@ def main_menu(stdscr):
   kinds=Three('SOTA',False,'POTA',
               ['SOTA'],['SOTA','POTA'],['POTA'],
               False,False,True,'c')
-  loc=Three('US',False,'MX/CA',
-            spots_us,spots_na,spots_ca_mx,
-            False,False,True,'c')
   sorting=Two('Freq','Time',
               'freq','time',
               'l')
-  bands=Two('Mobile','All',
-            mobile_bands,stationary_bands,
-            'r')
+  delete=Two('Auto','Manual',
+              'auto','man',
+              'l')
 
   # Clear and refresh the screen.
   stdscr.clear()
@@ -557,17 +548,17 @@ def main_menu(stdscr):
             things=sorted(spots,key=lambda s: s.age())
           for spot in things:
             # Display the spots as specified by user preferences.
-            if((find_ref(spot.reference,loc.get_value()[0])) and
+            if((find_loc(spot.loc,valid_locs)) and
                 (spot.mode in mode.get_value()) and
                 (spot.kind in kinds.get_value()[0]) and
                 (not (spot.freq in gone_freqs)) and
                 (not (spot.id in hide)) and
-                (spot.band() in bands.get_value()[0]) and
+                (spot.band() in valid_bands) and
                 (spot.age()<=max_age) and
                 (spot.band()!="unknown") and
                 (not (spot.id in displayed))):
               displayed.append(spot.id)
-              # TODO: We should probably add the last spot by
+              # TODO: We should probably add the latest spot by
               # timestamp rather than the first in the list.
               if(not(spot.id in allspots)):
                 allspots.append(spot.id)
@@ -619,10 +610,6 @@ def main_menu(stdscr):
         time.sleep(0.25)
       elif(k==ord('m') or k==ord('M')):
         mode.toggle()
-      elif(k==ord('l') or k==ord('L')):
-        loc.toggle()
-      elif(k==ord('b') or k==ord('B')):
-        bands.toggle()
       elif(k==ord('w') or k==ord('W')):
         worked_it(current)
       elif(k==ord('c') or k==ord('C')):
@@ -631,6 +618,8 @@ def main_menu(stdscr):
         heard_it(current)
       elif(k==ord('s') or k==ord('S')):
         kinds.toggle()
+      elif(k==ord('a') or k==ord('A')):
+        delete.toggle()
       elif(k==ord('o') or k==ord('O')):
         sorting.toggle()
       elif(k==ord('r') or k==ord('R')):
@@ -645,13 +634,14 @@ def main_menu(stdscr):
         heard=[]
       elif(k==ord('D')):
         debug=not(debug)
-      elif(k==ord('i')):
+      elif(k==ord('i') or k==ord('I')):
         hide_it(current)
         current=False
       elif(k==ord('j')):
         with spots_lock:
           if(not(current) and len(displayed)>0):
             current=displayed[0]
+            radio_tune(current)
           else:
             if(current in displayed):
               n=displayed.index(current)
@@ -661,6 +651,8 @@ def main_menu(stdscr):
                 current=displayed[0]
             else:
               current=False
+        if(delete.get_value()[0]=='auto'):
+          radio_tune(current)
       elif(k==ord('k')):
         with spots_lock:
           if(not(current) and len(displayed)>0):
@@ -674,13 +666,20 @@ def main_menu(stdscr):
                 current=displayed[len(displayed)-1]
             else:
               current=False
+        if(delete.get_value()[0]=='auto'):
+          radio_tune(current)
+
+      if(delete.get_value()[0]=='auto'):
+        autohide=True
+      else:
+        autohide=False
 
       # Display the menu at the bottom.
       stdscr.addstr(height-5,0,'O:  '+sorting.show(),curses.color_pair(4))
       stdscr.addstr(height-4,0,'S:  '+kinds.show(),curses.color_pair(4))
       stdscr.addstr(height-3,0,'M:  '+mode.show(),curses.color_pair(4))
-      stdscr.addstr(height-2,0,'L:  '+loc.show(),curses.color_pair(4))
-      stdscr.addstr(height-1,0,'B:  '+bands.show(),curses.color_pair(4))
+      stdscr.addstr(height-2,0,'A:  '+delete.show(),curses.color_pair(4))
+#      stdscr.addstr(height-1,0,'L:  '+loc.show(),curses.color_pair(4))
       stdscr.addstr(height-5,30,'T:  Tune',curses.color_pair(4))
       stdscr.addstr(height-4,30,'C:  Cannot Hear',curses.color_pair(4))
       stdscr.addstr(height-3,30,'W:  Worked',curses.color_pair(4))
@@ -700,8 +699,10 @@ def main_menu(stdscr):
                         str(len(list(filter(lambda s: s.kind=='SOTA',spots))))+' '+
                         'POTA:'+
                         str(len(list(filter(lambda s: s.kind=='POTA',spots))))+' '+
-                        'Curr:'+
-                        str(current)+
+                        'delete:'+
+                        str(delete.get_value())+' '+
+                        'auto:'+
+                        str(autohide)+
                         full_blank,curses.color_pair(3))
         else:
           stdscr.addstr(0,0,full_blank,curses.color_pair(2))
@@ -716,7 +717,6 @@ if __name__ == '__main__':
   parser.add_argument('--no_curses',default=False,action='store_true',help='No curses')
   parser.add_argument('--no_state',default=False,action='store_true',help='Do not load state')
   parser.add_argument('--max_age',default=False,help='Max spot age in seconds (default 600)')
-  parser.add_argument('--autohide',default=False,action='store_true',help='Automatically hide worked/uheard')
   args=parser.parse_args()
 
   # Turn on debug if the user wants it.
@@ -725,9 +725,6 @@ if __name__ == '__main__':
   else:
     debug=False
     
-  if(args.autohide):
-    autohide=True
-
   # Open the log file.
   logfile=open(str(pathlib.Path.home())+'/spota.log','a+')
 
@@ -753,6 +750,10 @@ if __name__ == '__main__':
   # Send radio data to the log.
   log(Hamlib.rigerror(rig.error_status))
 
+  # Set the max age of displayed spots, if selected.
+  if(args.max_age):
+    max_age=int(args.max_age)
+
   # Load state data.
   if(not(args.no_state)):
     print('Loading state...')
@@ -774,12 +775,9 @@ if __name__ == '__main__':
   thread2=Thread(target=state_thread,args=('State Thread',),daemon=True)
   thread2.start()
 
-  # Set the max age of displayed spots, if selected.
-  if(args.max_age):
-    max_age=int(args.max_age)
-
   # This is sort of a debug mode.
-  if(args.no_curses):
+  no_curses=args.no_curses
+  if(no_curses):
     while True:
       print(len(spots))
       time.sleep(1)
