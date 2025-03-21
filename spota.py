@@ -631,40 +631,58 @@ def main_menu(stdscr):
       if(k==-1):
         time.sleep(0.25)
       elif(k==ord('m') or k==ord('M')):
+        # Select CW spots, SSB spots, or both.
         mode.toggle()
       elif(k==ord('w') or k==ord('W')):
+        # Mark the current spot as worked.
         worked_it(current)
       elif(k==ord('c') or k==ord('C')):
+        # I can't hear this spot.
         cannot_hear(current)
       elif(k==ord('h') or k==ord('H')):
+        # Mark this spot as heard (so I can go back to it later).
         heard_it(current)
       elif(k==ord('s') or k==ord('S')):
+        # Select SOTA, POTA, or both.
         kinds.toggle()
       elif(k==ord('a') or k==ord('A')):
         delete.toggle()
+        # When switching back to auto mode, automatically hide
+        # everything that was marked as unheard or worked. This allows
+        # the user to switch to manual mode, quickly mark a bunch of
+        # things, then hide them all in a batch.
         if(delete.get_value()[0]=='auto'):
           for s in unheard:
             hide_it(s)
           for s in worked:
             hide_it(s)
       elif(k==ord('o') or k==ord('O')):
+        # Select sort by time or sort by frequency.
         sorting.toggle()
       elif(k==ord('r') or k==ord('R')):
+        # Unmark this spot.
         worked=list(filter(lambda i: i!=current,worked))
         unheard=list(filter(lambda i: i!=current,unheard))
         heard=list(filter(lambda i: i!=current,heard))
       elif(k==ord('t') or k==ord('T')):
+        # Tune the rig to the frequency and mode of this spot. This
+        # happens automatically in auto mode.
         radio_tune(current)
       elif(k==ord('X')):
+        # Unmark everything.
         worked=[]
         unheard=[]
         heard=[]
+        hide=[]
       elif(k==ord('D')):
+        # Toggle debug mode.
         debug=not(debug)
       elif(k==ord('i') or k==ord('I')):
+        # Hide this spot.
         hide_it(current)
         current=False
-      elif(k==ord('j')):
+      elif(k==ord('j') or k==ord('J')):
+        # Select the next spot (down).
         with spots_lock:
           if(not(current) and len(displayed)>0):
             current=displayed[0]
@@ -678,9 +696,11 @@ def main_menu(stdscr):
                 current=displayed[0]
             else:
               current=False
+        # Automatically tune the rig if auto.
         if(delete.get_value()[0]=='auto'):
           radio_tune(current)
-      elif(k==ord('k')):
+      elif(k==ord('k') or k==ord('K')):
+        # Select the previous spot (up).
         with spots_lock:
           if(not(current) and len(displayed)>0):
             current=displayed[0]
@@ -693,9 +713,11 @@ def main_menu(stdscr):
                 current=displayed[len(displayed)-1]
             else:
               current=False
+        # Automatically tune the rig if auto.
         if(delete.get_value()[0]=='auto'):
           radio_tune(current)
-
+      # Automatically hide unheard and worked stations if in auto
+      # mode.
       if(delete.get_value()[0]=='auto'):
         autohide=True
       else:
