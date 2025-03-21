@@ -6,7 +6,7 @@ TODO: Add the rest of the gone_freq list.
 
 TODO: Clean up the whole mobile bands thing.
 
-TODO: Read setup from a file.
+TODO: Read config from a file.
 
 TODO: Display the newest spot when there's a hash collision (ie, more than one).
 
@@ -18,3 +18,10 @@ TODO: Think about using the lat/lon data in the POTA spots and
       combined with ToD and band information, this might lead to
       suggesting most likely spots to be reachable at the current time
       (as well as historically).
+
+TODO: Expire old spots from the arrays so things don't grow without
+      bounds. Probably not really necessary with gigs of ram and low
+      volumes of data, but it's the principle of the thing.
+
+TODO: Do something smarter with the pointer when hiding a spot. Don't
+      force it back to the top.

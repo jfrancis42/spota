@@ -22,10 +22,13 @@ import urllib3
 urllib3.disable_warnings()
 from dateutil.parser import parse
 import argparse
+import pathlib
 import Hamlib
 
 global spots_lock
 global spots
+global rig_lock
+global rig
 global updating
 global s
 global sel_bands
@@ -37,17 +40,24 @@ global logfile
 global worked
 global unheard
 global heard
+global hide
 global allspots
 global debug
+global rig_freq
+global rig_mode
+global autohide
 
 debug=False
+autohide=False
 spots=array.array('i',[])
 allspots=[]
 worked=[]
 unheard=[]
 heard=[]
+hide=[]
 updating=False
 spots_lock=threading.Lock()
+rig_lock=threading.Lock()
 s=False
 refresh=60
 max_age=600
@@ -200,7 +210,13 @@ class SPOT:
     offset=time.timezone if (time.localtime().tm_isdst==0) else time.altzone
     return(int(time.time()-self.spottime.timestamp()+offset))
 
-# pota class
+# POTA class. In the POTA API, the spotid does not stay constant for a
+# given operator in a given park on a given day. If he gets
+# re-spotted, he gets a new spotid. Hence, instead of using spotid as
+# a reference, we do a fast, non-cryptographic hash on his callsign
+# and park number. That way, when new spots come in for the same
+# activation, we keep the same reference. Which makes handling the GUI
+# approximately one zillion times easier.
 class POTA(SPOT):
   def __init__(self,stuff):
     SPOT.__init__(self,stuff)
@@ -288,6 +304,24 @@ class SOTA(SPOT):
           self.mode+
           '             ')
 
+# This thread runs forever, periodically saveing state.
+def state_thread(name):
+  global spots_lock
+  global worked
+  global heard
+  global unheard
+  global hide
+  
+  while True:
+    with spots_lock:
+      s=open(str(pathlib.Path.home())+'/spota.json','w+')
+      s.write(json.dumps({'worked':worked,
+                          'heard':heard,
+                          'unheard':unheard,
+                          'hide':hide})+'\n')
+      s.close()
+    time.sleep(13)
+
 # This thread runs forever, periodically fetching SOTA/POTA spots from
 # their respective APIs.
 def spots_thread(name):
@@ -306,7 +340,7 @@ def spots_thread(name):
         stuff=json.loads(r.text)
         for p in stuff:
           spots.append(POTA(p))
-      r=requests.get('https://api2.sota.org.uk/api/spots/50/all%7Call')
+      r=requests.get('https://api2.sota.org.uk/api/spots/100/all%7Call')
       if(r.status_code==200 or r.status_code==201):
         stuff=json.loads(r.text)
         for s in stuff:
@@ -322,11 +356,22 @@ def heard_it(current):
   global unheard
   global heard
   if(current):
-    spot=list(filter(lambda s: s.id==current,spots))[0]
+    with spots_lock:
+      spot=list(filter(lambda s: s.id==current,spots))[0]
     heard.append(current)
     unheard=list(filter(lambda i: i!=current,unheard))
     worked=list(filter(lambda i: i!=current,worked))
     log('heard:'+spot.oneline())
+
+# Mark a spot as hidden.
+def hide_it(current):
+  global spots
+  global hide
+  if(current):
+    with spots_lock:
+      spot=list(filter(lambda s: s.id==current,spots))[0]
+    hide.append(current)
+    log('hide:'+spot.oneline())
 
 # Mark a spot as worked.
 def worked_it(current):
@@ -334,12 +379,18 @@ def worked_it(current):
   global worked
   global unheard
   global heard
+  global autohide
   if(current):
-    spot=list(filter(lambda s: s.id==current,spots))[0]
+    with spots_lock:
+      spot=list(filter(lambda s: s.id==current,spots))[0]
     worked.append(current)
     unheard=list(filter(lambda i: i!=current,unheard))
     heard=list(filter(lambda i: i!=current,heard))
     log('worked:'+spot.oneline())
+    with open(str(pathlib.Path.home())+'/spota.worked','a+') as f:
+      f.write(spot.oneline()+'\n')
+  if(autohide):
+    hide_it(current)
 
 # Mark a spot as 'can't hear'.
 def cannot_hear(current):
@@ -347,29 +398,35 @@ def cannot_hear(current):
   global worked
   global unheard
   global heard
+  global autohide
   if(current):
-    spot=list(filter(lambda s: s.id==current,spots))[0]
+    with spots_lock:
+      spot=list(filter(lambda s: s.id==current,spots))[0]
     unheard.append(current)
     worked=list(filter(lambda i: i!=current,worked))
     heard=list(filter(lambda i: i!=current,heard))
     log('cannot_hear:'+spot.oneline())
+  if(autohide):
+    hide_it(current)
 
 # Tune the radio to this spot's frequency and mode.
 def radio_tune(current):
   global spots
   global rig
   if(current):
-    spot=list(filter(lambda s: s.id==current,spots))[0]
-    log('tune:'+spot.oneline())
-    rig.set_freq(Hamlib.RIG_VFO_A,spot.freq)
-    rig.set_vfo(Hamlib.RIG_VFO_A)
-    if(spot.mode=='CW'):
-          rig.set_mode(Hamlib.RIG_MODE_CW)
-    elif(spot.mode=='SSB'):
-      if(spot.freq>=10000000):
-        rig.set_mode(Hamlib.RIG_MODE_USB)
-      else:
-        rig.set_mode(Hamlib.RIG_MODE_LSB)
+    with spots_lock:
+      spot=list(filter(lambda s: s.id==current,spots))[0]
+    with rig_lock:
+      log('tune:'+spot.oneline())
+      rig.set_freq(Hamlib.RIG_VFO_A,spot.freq)
+      rig.set_vfo(Hamlib.RIG_VFO_A)
+      if(spot.mode=='CW'):
+            rig.set_mode(Hamlib.RIG_MODE_CW)
+      elif(spot.mode=='SSB'):
+        if(spot.freq>=10000000):
+          rig.set_mode(Hamlib.RIG_MODE_USB)
+        else:
+          rig.set_mode(Hamlib.RIG_MODE_LSB)
 
 # See if the given ref matches one of the list of prefix choices.
 def find_ref(ref,choices):
@@ -381,6 +438,8 @@ def main_menu(stdscr):
   global worked
   global unheard
   global heard
+  global hide
+  global now
 
   y=0
   k=0
@@ -391,6 +450,7 @@ def main_menu(stdscr):
   y_offset=2
   displayed=False
   blank='               '
+
   # In the SOTA world, it's common for the activator to spot himself
   # with the 'base' frequency of the current band to let the world
   # know he's done.
@@ -501,6 +561,7 @@ def main_menu(stdscr):
                 (spot.mode in mode.get_value()) and
                 (spot.kind in kinds.get_value()[0]) and
                 (not (spot.freq in gone_freqs)) and
+                (not (spot.id in hide)) and
                 (spot.band() in bands.get_value()[0]) and
                 (spot.age()<=max_age) and
                 (spot.band()!="unknown") and
@@ -520,6 +581,9 @@ def main_menu(stdscr):
                 color=4 # yellow for heard
               else:
                 color=3 # white for untouched
+              # Make sure the cursor doesn't disappear.
+              if(not(current) and len(displayed)>0):
+                current=displayed[0]
               # Display the pointer for the currently selected spot.
               if(current==spot.id):
                 stdscr.addstr(y+y_offset,0,
@@ -581,6 +645,9 @@ def main_menu(stdscr):
         heard=[]
       elif(k==ord('D')):
         debug=not(debug)
+      elif(k==ord('i')):
+        hide_it(current)
+        current=False
       elif(k==ord('j')):
         with spots_lock:
           if(not(current) and len(displayed)>0):
@@ -628,23 +695,28 @@ def main_menu(stdscr):
         if(debug):
           stdscr.addstr(0,0,
                         'Displayed:'+
-                        str(len(list(filter(lambda s: s.kind=='SOTA',spots))))+' '+
+                        str(len(displayed))+' '+
                         'SOTA:'+
-                        str(len(list(filter(lambda s: s.kind=='POTA',spots))))+' '+
+                        str(len(list(filter(lambda s: s.kind=='SOTA',spots))))+' '+
                         'POTA:'+
-                        str(len(displayed))+full_blank,curses.color_pair(3))
+                        str(len(list(filter(lambda s: s.kind=='POTA',spots))))+' '+
+                        'Curr:'+
+                        str(current)+
+                        full_blank,curses.color_pair(3))
         else:
-          stdscr.addstr(0,0,blank,curses.color_pair(2))
+          stdscr.addstr(0,0,full_blank,curses.color_pair(2))
       # Refresh anything added to the screen and start again.
       stdscr.refresh()
 
 if __name__ == '__main__':
   # Process the command line arguments.
-  parser=argparse.ArgumentParser(description="SOTA/POTA Monitor/Tuner")
-  parser.add_argument("--no_radio",default=False,action="store_true",help="Pretend to work")
-  parser.add_argument("--debug",default=False,action="store_true",help="Debug mode")
-  parser.add_argument("--no_curses",default=False,action="store_true",help="No curses")
-  parser.add_argument("--max_age",default=False,help="Max spot age in seconds (default 600)")
+  parser=argparse.ArgumentParser(description='SOTA/POTA Monitor/Tuner')
+  parser.add_argument('--no_radio',default=False,action='store_true',help='Pretend to work')
+  parser.add_argument('--debug',default=False,action='store_true',help='Debug mode')
+  parser.add_argument('--no_curses',default=False,action='store_true',help='No curses')
+  parser.add_argument('--no_state',default=False,action='store_true',help='Do not load state')
+  parser.add_argument('--max_age',default=False,help='Max spot age in seconds (default 600)')
+  parser.add_argument('--autohide',default=False,action='store_true',help='Automatically hide worked/uheard')
   args=parser.parse_args()
 
   # Turn on debug if the user wants it.
@@ -653,9 +725,11 @@ if __name__ == '__main__':
   else:
     debug=False
     
+  if(args.autohide):
+    autohide=True
+
   # Open the log file.
-  # TODO: Make this configurable.
-  logfile=open('/tmp/spota.log','a+')
+  logfile=open(str(pathlib.Path.home())+'/spota.log','a+')
 
   # Don't spew debug info to stdout.
   Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE)
@@ -664,8 +738,10 @@ if __name__ == '__main__':
   # where you add your own radio and serial info until I get around to
   # making it configurable.
   if(args.no_radio):
+    print('Connecting to dummy radio...')
     rig=Hamlib.Rig(Hamlib.RIG_MODEL_DUMMY)
   else:
+    print('Connecting to radio...')
     rig=Hamlib.Rig(Hamlib.RIG_MODEL_IC7300)
     rig.set_conf('rig_pathname','/dev/ttyUSB0')
     rig.set_conf('serial_speed','19200')
@@ -677,9 +753,26 @@ if __name__ == '__main__':
   # Send radio data to the log.
   log(Hamlib.rigerror(rig.error_status))
 
+  # Load state data.
+  if(not(args.no_state)):
+    print('Loading state...')
+    if(os.path.isfile(str(pathlib.Path.home())+'/spota.json')):
+      with open(str(pathlib.Path.home())+'/spota.json','r') as f:
+        stuff=json.load(f)
+        worked=stuff['worked']
+        heard=stuff['heard']
+        unheard=stuff['unheard']
+        hide=stuff['hide']
+
   # Start the thread to fetch spot data.
+  print('Starting spot thread...')
   thread1=Thread(target=spots_thread,args=('Spots Thread',),daemon=True)
   thread1.start()
+
+  # Start the thread to periodically save state.
+  print('Starting state thread...')
+  thread2=Thread(target=state_thread,args=('State Thread',),daemon=True)
+  thread2.start()
 
   # Set the max age of displayed spots, if selected.
   if(args.max_age):
