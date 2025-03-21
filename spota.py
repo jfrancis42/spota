@@ -254,16 +254,27 @@ class POTA(SPOT):
   def json(self):
     return(json.dumps(self.stuff,indent=2))
 
-  def oneline(self):
+  def log_string(self):
     return(self.kind+':'+
-          str(self.id)+':'+
-          str(self.spotid)+':'+
-          self.activator+':'+
-          self.locationdesc+':'+
-          self.reference+':'+
-          str(self.freq/1000.0)+':'+
-          self.mode+
-          '             ')
+           str(self.id)+':'+
+           str(self.spotid)+':'+
+           self.activator+':'+
+           self.locationdesc+':'+
+           self.reference+':'+
+           str(self.freq/1000.0)+':'+
+           self.mode+
+           '             ')
+
+  def worked_string(self):
+    return(self.kind+':'+
+           str(datetime.datetime.now())+':'+
+           str(self.spotid)+':'+
+           self.activator+':'+
+           self.locationdesc+':'+
+           self.reference+':'+
+           str(self.freq/1000.0)+':'+
+           self.mode+
+           '             ')
 
 def fixer(thing):
   if(not(thing) or (thing=='')):
@@ -297,18 +308,29 @@ class SOTA(SPOT):
   def json(self):
     return(json.dumps(self.stuff,indent=2))
 
-  def oneline(self):
+  def log_string(self):
     return(self.kind+':'+
-          str(self.id)+':'+
-          str(self.spotid)+':'+
-          self.activator+':'+
-          self.locationdesc+':'+
-          self.reference+':'+
-          str(self.freq/1000.0)+':'+
-          self.mode+
-          '             ')
+           str(self.id)+':'+
+           str(self.spotid)+':'+
+           self.activator+':'+
+           self.locationdesc+':'+
+           self.reference+':'+
+           str(self.freq/1000.0)+':'+
+           self.mode+
+           '             ')
 
-# This thread runs forever, periodically saveing state.
+  def worked_string(self):
+    return(self.kind+':'+
+           str(datetime.datetime.now())+':'+
+           str(self.spotid)+':'+
+           self.activator+':'+
+           self.locationdesc+':'+
+           self.reference+':'+
+           str(self.freq/1000.0)+':'+
+           self.mode+
+           '             ')
+
+# This thread runs forever, periodically saving state.
 def state_thread(name):
   global spots_lock
   global worked
@@ -366,7 +388,7 @@ def heard_it(current):
     heard.append(current)
     unheard=list(filter(lambda i: i!=current,unheard))
     worked=list(filter(lambda i: i!=current,worked))
-    log('heard:'+spot.oneline())
+    log('heard:'+spot.log_string())
 
 # Mark a spot as hidden.
 def hide_it(current):
@@ -376,7 +398,7 @@ def hide_it(current):
     with spots_lock:
       spot=list(filter(lambda s: s.id==current,spots))[0]
     hide.append(current)
-    log('hide:'+spot.oneline())
+    log('hide:'+spot.log_string())
 
 # Mark a spot as worked.
 def worked_it(current):
@@ -391,9 +413,9 @@ def worked_it(current):
     worked.append(current)
     unheard=list(filter(lambda i: i!=current,unheard))
     heard=list(filter(lambda i: i!=current,heard))
-    log('worked:'+spot.oneline())
+    log('worked:'+spot.log_string())
     with open(str(pathlib.Path.home())+'/spota.worked','a+') as f:
-      f.write(spot.oneline()+'\n')
+      f.write(spot.worked_string()+'\n')
   if(autohide):
     hide_it(current)
 
@@ -410,7 +432,7 @@ def cannot_hear(current):
     unheard.append(current)
     worked=list(filter(lambda i: i!=current,worked))
     heard=list(filter(lambda i: i!=current,heard))
-    log('cannot_hear:'+spot.oneline())
+    log('cannot_hear:'+spot.log_string())
   if(autohide):
     hide_it(current)
 
@@ -422,7 +444,7 @@ def radio_tune(current):
     with spots_lock:
       spot=list(filter(lambda s: s.id==current,spots))[0]
     with rig_lock:
-      log('tune:'+spot.oneline())
+      log('tune:'+spot.log_string())
       rig.set_freq(Hamlib.RIG_VFO_A,spot.freq)
       rig.set_vfo(Hamlib.RIG_VFO_A)
       if(spot.mode=='CW'):
@@ -562,7 +584,7 @@ def main_menu(stdscr):
               # timestamp rather than the first in the list.
               if(not(spot.id in allspots)):
                 allspots.append(spot.id)
-                log('added:'+spot.oneline())
+                log('added:'+spot.log_string())
               # Set the colors for each line.
               if(spot.id in worked):
                 color=1 # green for worked
@@ -620,6 +642,11 @@ def main_menu(stdscr):
         kinds.toggle()
       elif(k==ord('a') or k==ord('A')):
         delete.toggle()
+        if(delete.get_value()[0]=='auto'):
+          for s in unheard:
+            hide_it(s)
+          for s in worked:
+            hide_it(s)
       elif(k==ord('o') or k==ord('O')):
         sorting.toggle()
       elif(k==ord('r') or k==ord('R')):
@@ -699,10 +726,8 @@ def main_menu(stdscr):
                         str(len(list(filter(lambda s: s.kind=='SOTA',spots))))+' '+
                         'POTA:'+
                         str(len(list(filter(lambda s: s.kind=='POTA',spots))))+' '+
-                        'delete:'+
-                        str(delete.get_value())+' '+
-                        'auto:'+
-                        str(autohide)+
+#                        'displayed:'+
+#                        str(displayed)+' '+
                         full_blank,curses.color_pair(3))
         else:
           stdscr.addstr(0,0,full_blank,curses.color_pair(2))
