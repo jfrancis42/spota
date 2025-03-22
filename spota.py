@@ -455,7 +455,7 @@ def radio_tune(current):
         else:
           rig.set_mode(Hamlib.RIG_MODE_LSB)
 
-# See if the given ref matches one of the list of prefix choices.
+# See if the given loc matches one of the list of prefix choices.
 def find_loc(loc,choices):
   return(sorted(list(map(lambda c: loc.find(c),choices)),reverse=True)[0]==0)
 
@@ -478,11 +478,20 @@ def main_menu(stdscr):
   y_offset=2
   displayed=False
   blank='               '
+  care_call=False
+  care_loc=False
 
   # In the SOTA world, it's common for the activator to spot himself
   # with the 'base' frequency of the current band to let the world
   # know he's done.
   gone_freqs=[3500000.0,7000000.0,10000000.0,14000000.0]
+
+  # Call signs I care about.
+  care_calls=['KG0AT','KM4ACK','W2AEW','WA2USA','KX0R','WS0TA']
+
+  # Locations I care about.
+  care_locs=['W0C','W5N','W7U','W5T','W7W',
+             'US-SD','US-UT','US-CO','US-TX','US-NM','US-WA']
 
   # These are the SOTA/POTA locators for North America.
   valid_locs=['K0M','KH0','KH2','KH6','KP4','W0C','W0D','W0I','W0M','W0N','W1','W2','W3',
@@ -604,9 +613,20 @@ def main_menu(stdscr):
               else:
                 stdscr.addstr(y+y_offset,0,
                               '   ',curses.color_pair(color))
+              # Reverse video if we care about the location.
+              if((sorted(list(map(lambda c: spot.locationdesc.find(c),care_locs)),reverse=True)[0]==0) or
+                 (sorted(list(map(lambda c: spot.loc.find(c),care_locs)),reverse=True)[0]==0)):
+                care_loc=curses.A_REVERSE
+              else:
+                care_loc=curses.A_NORMAL
+              # Reverse video if we care about the call.
+              if(spot.reference in care_calls):
+                care_call=curses.A_REVERSE
+              else:
+                care_call=curses.A_NORMAL
               # Display the fields for this spot.
               stdscr.addstr(y+y_offset,5,
-                            spot.kind+blank,curses.color_pair(color))
+                            spot.kind+blank,curses.color_pair(color)|care_call|care_loc)
               stdscr.addstr(y+y_offset,10,
                             ' '+spot.activator+blank,curses.color_pair(color))
               stdscr.addstr(y+y_offset,20,
@@ -619,6 +639,9 @@ def main_menu(stdscr):
                             ' '+str(spot.age())+big_blank,curses.color_pair(color))
               stdscr.addstr(y+y_offset,59,
                             ' '+spot.locationdesc+big_blank,curses.color_pair(color))
+              # Normal video.
+              care_call=curses.A_NORMAL
+              care_loc=curses.A_NORMAL
               # Increment down the screen until we run out of room.
               if(y<height-y_offset-7):
                 y=y+1
