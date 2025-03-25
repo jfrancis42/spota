@@ -47,8 +47,10 @@ global rig_freq
 global rig_mode
 global autohide
 global no_curses
+global max_sota
 
 debug=False
+max_sota=False
 autohide=False
 no_curses=False
 spots=array.array('i',[])
@@ -356,7 +358,8 @@ def spots_thread(name):
   global updating
   global refresh
   global no_curses
-  
+  global max_sota
+
   while True:
     spots=[]
     with spots_lock:
@@ -367,7 +370,10 @@ def spots_thread(name):
         stuff=json.loads(r.text)
         for p in stuff:
           spots.append(POTA(p))
-      r=requests.get('https://api2.sota.org.uk/api/spots/50/all%7Call')
+      if(max_sota):
+        r=requests.get('https://api2.sota.org.uk/api/spots/200/all%7Call')
+      else:
+        r=requests.get('https://api2.sota.org.uk/api/spots/50/all%7Call')
       if(r.status_code==200 or r.status_code==201):
         stuff=json.loads(r.text)
         for s in stuff:
@@ -396,9 +402,11 @@ def hide_it(current):
   global hide
   if(current):
     with spots_lock:
-      spot=list(filter(lambda s: s.id==current,spots))[0]
-    hide.append(current)
-    log('hide:'+spot.log_string())
+      tmp=list(filter(lambda s: s.id==current,spots))
+      if(tmp):
+        spot=tmp[0]
+        hide.append(current)
+        log('hide:'+spot.log_string())
 
 # Mark a spot as worked.
 def worked_it(current):
@@ -490,8 +498,14 @@ def main_menu(stdscr):
   care_calls=['KG0AT','KM4ACK','W2AEW','WA2USA','KX0R','WS0TA']
 
   # Locations I care about.
-  care_locs=['W0C','W5N','W7U','W5T','W7W',
-             'US-SD','US-UT','US-CO','US-TX','US-NM','US-WA']
+  care_locs=['W0C','W0D','W0I','W0M','W0N',
+             'W5A','W5M','W5N','W5O','W5T','W6',
+             'W7A','W7I','W7M','W7N','W7O','W7U','W7W','W7Y',
+             'W6','VE7',
+             'US-CO','US-ND','US-SD','US-MN','US-NE','US-KS','US-IA','US-MO',
+             'US-NM','US-TX','US-OK','US-AR','US-LA','US-MS',
+             'US-WA','US-OR','US-ID','US-MT','US-WY','US-NV','US-UT','US-AZ',
+             'US-CA','US-AK','CA-BC']
 
   # These are the SOTA/POTA locators for North America.
   valid_locs=['K0M','KH0','KH2','KH6','KP4','W0C','W0D','W0I','W0M','W0N','W1','W2','W3',
@@ -503,7 +517,7 @@ def main_menu(stdscr):
 
   # These are the bands I can work from home/portable.
   valid_bands=['eighty','sixty','forty','thirty','twenty',
-                    'seventeen','fifteen','twelve','ten']
+               'seventeen','fifteen','twelve','ten']
 
   # Add the various "switches" for switching and displaying of options
   # in the GUI.
@@ -517,8 +531,8 @@ def main_menu(stdscr):
               'freq','time',
               'l')
   delete=Two('Auto','Manual',
-              'auto','man',
-              'l')
+             'auto','man',
+             'l')
 
   # Clear and refresh the screen.
   stdscr.clear()
@@ -580,21 +594,31 @@ def main_menu(stdscr):
           for spot in things:
             # Display the spots as specified by user preferences.
             if((find_loc(spot.loc,valid_locs)) and
-                (spot.mode in mode.get_value()) and
-                (spot.kind in kinds.get_value()[0]) and
-                (not (spot.freq in gone_freqs)) and
-                (not (spot.id in hide)) and
-                (spot.band() in valid_bands) and
-                (spot.age()<=max_age) and
-                (spot.band()!="unknown") and
-                (not (spot.id in displayed))):
+               (spot.mode in mode.get_value()) and
+               (spot.kind in kinds.get_value()[0]) and
+               (not (spot.freq in gone_freqs)) and
+               (not (spot.id in hide)) and
+               (spot.band() in valid_bands) and
+               (spot.age()<=max_age) and
+               (spot.band()!="unknown") and
+               (not (spot.id in displayed))):
               displayed.append(spot.id)
-              # TODO: We should probably add the latest spot by
-              # timestamp rather than the first in the list.
+              # With SOTA spots, it's possible to have multiple spots
+              # with the same peak and activator, but different
+              # frequencies. This adds the newest spot with a given id
+              # and ignores the older ones. I think. This is an
+              # expensive operation to do every cycle. Should probably
+              # do this at object instantiation time.
               if(not(spot.id in allspots)):
-                allspots.append(spot.id)
-                log('added:'+spot.log_string())
-              # Set the colors for each line.
+                if(spot.kind=='SOTA'):
+                  allspots.append(
+                    sorted(
+                      filter(lambda s: s.id==spot.id,spots),
+                      key=lambda a: a.age(),reverse=True)[0].id)
+                else:
+                  allspots.append(spot.id)
+                  log('added:'+spot.log_string())
+                  # Set the colors for each line.
               if(spot.id in worked):
                 color=1 # green for worked
               elif(spot.id in unheard):
@@ -603,34 +627,36 @@ def main_menu(stdscr):
                 color=4 # yellow for heard
               else:
                 color=3 # white for untouched
-              # Make sure the cursor doesn't disappear.
+                # Make sure the cursor doesn't disappear.
               if(not(current) and len(displayed)>0):
                 current=displayed[0]
-              # Display the pointer for the currently selected spot.
+                # Display the pointer for the currently selected spot.
               if(current==spot.id):
                 stdscr.addstr(y+y_offset,0,
                               '-->',curses.color_pair(color))
               else:
                 stdscr.addstr(y+y_offset,0,
                               '   ',curses.color_pair(color))
-              # Reverse video if we care about the location.
+                # Reverse video if we care about the location. This is
+                # an expensive operation to do every cycle. Should
+                # probably do this at object instantiation time.
               if((sorted(list(map(lambda c: spot.locationdesc.find(c),care_locs)),reverse=True)[0]==0) or
                  (sorted(list(map(lambda c: spot.loc.find(c),care_locs)),reverse=True)[0]==0)):
                 care_loc=curses.A_REVERSE
               else:
                 care_loc=curses.A_NORMAL
-              # Reverse video if we care about the call.
-              if(spot.reference in care_calls):
+                # Reverse video if we care about the call.
+              if(spot.activator in care_calls):
                 care_call=curses.A_REVERSE
               else:
                 care_call=curses.A_NORMAL
-              # Display the fields for this spot.
+                # Display the fields for this spot.
               stdscr.addstr(y+y_offset,5,
                             spot.kind+blank,curses.color_pair(color)|care_call|care_loc)
               stdscr.addstr(y+y_offset,10,
-                            ' '+spot.activator+blank,curses.color_pair(color))
+                            ' '+spot.activator+blank,curses.color_pair(color)|care_call)
               stdscr.addstr(y+y_offset,20,
-                            ' '+spot.reference+blank,curses.color_pair(color))
+                            ' '+spot.reference+blank,curses.color_pair(color)|care_loc)
               stdscr.addstr(y+y_offset,35,
                             ' '+str(spot.freq/1000.0)+blank,curses.color_pair(color))
               stdscr.addstr(y+y_offset,45,
@@ -645,11 +671,11 @@ def main_menu(stdscr):
               # Increment down the screen until we run out of room.
               if(y<height-y_offset-7):
                 y=y+1
-      # Blank out the unused space.
+                # Blank out the unused space.
       for n in range(height-y-y_offset-6):
         stdscr.addstr(y+n+y_offset,0,
                       full_blank,curses.color_pair(color))
-      # Read the keyboard and process options.
+        # Read the keyboard and process options.
       k=stdscr.getch()
       if(k==-1):
         time.sleep(0.25)
@@ -719,7 +745,7 @@ def main_menu(stdscr):
                 current=displayed[0]
             else:
               current=False
-        # Automatically tune the rig if auto.
+              # Automatically tune the rig if auto.
         if(delete.get_value()[0]=='auto'):
           radio_tune(current)
       elif(k==ord('k') or k==ord('K')):
@@ -736,11 +762,11 @@ def main_menu(stdscr):
                 current=displayed[len(displayed)-1]
             else:
               current=False
-        # Automatically tune the rig if auto.
+              # Automatically tune the rig if auto.
         if(delete.get_value()[0]=='auto'):
           radio_tune(current)
-      # Automatically hide unheard and worked stations if in auto
-      # mode.
+          # Automatically hide unheard and worked stations if in auto
+          # mode.
       if(delete.get_value()[0]=='auto'):
         autohide=True
       else:
@@ -751,7 +777,7 @@ def main_menu(stdscr):
       stdscr.addstr(height-4,0,'S:  '+kinds.show(),curses.color_pair(4))
       stdscr.addstr(height-3,0,'M:  '+mode.show(),curses.color_pair(4))
       stdscr.addstr(height-2,0,'A:  '+delete.show(),curses.color_pair(4))
-#      stdscr.addstr(height-1,0,'L:  '+loc.show(),curses.color_pair(4))
+      #      stdscr.addstr(height-1,0,'L:  '+loc.show(),curses.color_pair(4))
       stdscr.addstr(height-5,30,'T:  Tune',curses.color_pair(4))
       stdscr.addstr(height-4,30,'C:  Cannot Hear',curses.color_pair(4))
       stdscr.addstr(height-3,30,'W:  Worked',curses.color_pair(4))
@@ -771,12 +797,12 @@ def main_menu(stdscr):
                         str(len(list(filter(lambda s: s.kind=='SOTA',spots))))+' '+
                         'POTA:'+
                         str(len(list(filter(lambda s: s.kind=='POTA',spots))))+' '+
-#                        'displayed:'+
-#                        str(displayed)+' '+
+                        #                        'displayed:'+
+                        #                        str(displayed)+' '+
                         full_blank,curses.color_pair(3))
         else:
           stdscr.addstr(0,0,full_blank,curses.color_pair(2))
-      # Refresh anything added to the screen and start again.
+          # Refresh anything added to the screen and start again.
       stdscr.refresh()
 
 if __name__ == '__main__':
@@ -787,6 +813,7 @@ if __name__ == '__main__':
   parser.add_argument('--no_curses',default=False,action='store_true',help='No curses')
   parser.add_argument('--no_state',default=False,action='store_true',help='Do not load state')
   parser.add_argument('--max_age',default=False,help='Max spot age in seconds (default 600)')
+  parser.add_argument('--max_sota',default=False,action='store_true',help='Grab the max SOTA data (for testing only)')
   args=parser.parse_args()
 
   # Turn on debug if the user wants it.
@@ -795,6 +822,15 @@ if __name__ == '__main__':
   else:
     debug=False
     
+  # Grab the max number of SOTA spots from the SOTA API every sixty
+  # seconds. There is no end user to doing this and it loads down the
+  # SOTA server, so don't turn this on unless you're testing something
+  # specific that needs it.
+  if(args.max_sota):
+    max_sota=True
+  else:
+    max_sota=False
+
   # Open the log file.
   logfile=open(str(pathlib.Path.home())+'/spota.log','a+')
 
