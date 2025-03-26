@@ -342,7 +342,7 @@ def state_thread(name):
   
   while True:
     with spots_lock:
-      s=open(str(pathlib.Path.home())+'/spota.json','w+')
+      s=open(str(pathlib.Path.home())+'/.spota.json','w+')
       s.write(json.dumps({'worked':worked,
                           'heard':heard,
                           'unheard':unheard,
@@ -832,7 +832,7 @@ if __name__ == '__main__':
     max_sota=False
 
   # Open the log file.
-  logfile=open(str(pathlib.Path.home())+'/spota.log','a+')
+  logfile=open(str(pathlib.Path.home())+'/.spota.log','a+')
 
   # Don't spew debug info to stdout.
   Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE)
