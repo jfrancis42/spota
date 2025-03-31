@@ -495,7 +495,8 @@ def main_menu(stdscr):
   gone_freqs=[3500000.0,7000000.0,10000000.0,14000000.0]
 
   # Call signs I care about.
-  care_calls=['WG0AT','KM4ACK','W2AEW','WA2USA','KX0R','WS0TA']
+  care_calls=['WG0AT','KM4ACK','W2AEW','WA2USA','KX0R','WS0TA','K6EL',
+              'K0MOS','W0MNA','K7CAR','AE7AP','N6JRL','K6SND','NA0MT']
 
   # Locations I care about.
   care_locs=['W0C','W0D','W0I','W0M','W0N',
